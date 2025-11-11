@@ -272,7 +272,10 @@ def start_command(message):
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def check_subscription_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Проверка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Проверка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     user_id = call.from_user.id
     
@@ -281,7 +284,10 @@ def check_subscription_callback(call):
     
     # Принудительная проверка подписки (игнорируем кэш)
     if check_subscription(user_id, force_check=True):
-        bot.answer_callback_query(call.id, "✅ Вы подписаны!")
+        try:
+            bot.answer_callback_query(call.id, "✅ Вы подписаны!")
+        except:
+            pass  # Игнорируем ошибку, если callback устарел
         
         # Проверяем, есть ли ожидающий реферал (в фоне)
         pending_referrer_id = db.get_pending_referral(user_id)
@@ -296,23 +302,35 @@ def check_subscription_callback(call):
         # Обновляем меню
         start_command(call.message)
     else:
-        bot.answer_callback_query(call.id, "❌ Вы не подписаны на канал!")
+        try:
+            bot.answer_callback_query(call.id, "❌ Вы не подписаны на канал!")
+        except:
+            pass  # Игнорируем ошибку, если callback устарел
 
 @bot.callback_query_handler(func=lambda call: call.data == "my_referral")
 def my_referral_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     user_id = call.from_user.id
     
     # Быстрая проверка бана (использует кэш)
     if db.is_banned(user_id):
-        bot.answer_callback_query(call.id, "❌ Вы заблокированы!")
+        try:
+            bot.answer_callback_query(call.id, "❌ Вы заблокированы!")
+        except:
+            pass
         return
     
     # Быстрая проверка подписки (использует кэш)
     if not check_subscription(user_id):
-        bot.answer_callback_query(call.id, "❌ Подпишитесь на канал!")
+        try:
+            bot.answer_callback_query(call.id, "❌ Подпишитесь на канал!")
+        except:
+            pass
         return
     
     # Получаем данные (использует кэш)
@@ -321,7 +339,10 @@ def my_referral_callback(call):
     referrals_count = user['referrals_count'] if user else 0
     
     if not referral_code:
-        bot.answer_callback_query(call.id, "❌ Ошибка!")
+        try:
+            bot.answer_callback_query(call.id, "❌ Ошибка!")
+        except:
+            pass
         return
     
     # Используем кэшированный username
@@ -346,7 +367,10 @@ def my_referral_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data == "top_users")
 def top_users_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     user_id = call.from_user.id
     
@@ -389,7 +413,10 @@ def top_users_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data == "rules")
 def rules_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     # Формируем текст (без запросов к БД)
     text = "📋 <b>ПРАВИЛА КОНКУРСА:</b>\n\n"
@@ -421,7 +448,10 @@ def rules_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data == "back_to_menu")
 def back_to_menu_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     # Используем данные из callback (не запрашиваем БД)
     first_name = call.from_user.first_name
@@ -443,7 +473,10 @@ def back_to_menu_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
 def admin_callback(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     user_id = call.from_user.id
     
@@ -476,7 +509,10 @@ def admin_callback(call):
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
                                  reply_markup=keyboard, parse_mode='HTML')
         except Exception:
-            bot.answer_callback_query(call.id, "✅ Информация актуальна!")
+            try:
+                bot.answer_callback_query(call.id, "✅ Информация актуальна!")
+            except:
+                pass  # Игнорируем ошибку, если callback устарел
     
     elif call.data == "admin_ban":
         bot.send_message(user_id, "Введите ID пользователя для бана:")
@@ -495,19 +531,28 @@ def admin_callback(call):
                                 call.message.chat.id, call.message.message_id,
                                 reply_markup=keyboard)
         except Exception:
-            bot.answer_callback_query(call.id, "✅")
+            try:
+                bot.answer_callback_query(call.id, "✅")
+            except:
+                pass  # Игнорируем ошибку, если callback устарел
     
     elif call.data == "admin_back":
         try:
             bot.edit_message_text("🔧 Админ панель:", call.message.chat.id, call.message.message_id,
                                  reply_markup=get_admin_menu())
         except Exception:
-            bot.answer_callback_query(call.id, "✅")
+            try:
+                bot.answer_callback_query(call.id, "✅")
+            except:
+                pass  # Игнорируем ошибку, если callback устарел
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_reset_confirm")
 def admin_reset_confirm(call):
     # МГНОВЕННЫЙ ОТВЕТ на callback
-    bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
     
     user_id = call.from_user.id
     if user_id != ADMIN_ID:
