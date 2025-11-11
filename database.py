@@ -19,107 +19,132 @@ class Database:
         if self._initialized:
             return
         self._initialized = True
-        # Максимальная оптимизация SQLite
-        self.conn = sqlite3.connect('referral_bot.db', check_same_thread=False, timeout=10.0)
-        self.conn.row_factory = sqlite3.Row
-        # Включаем оптимизации SQLite
-        self.conn.execute('PRAGMA journal_mode=WAL')  # Write-Ahead Logging для скорости
-        self.conn.execute('PRAGMA synchronous=NORMAL')  # Баланс скорости и надежности
-        self.conn.execute('PRAGMA cache_size=10000')  # Увеличенный кэш
-        self.conn.execute('PRAGMA temp_store=MEMORY')  # Временные данные в памяти
-        self.conn.execute('PRAGMA mmap_size=268435456')  # 256MB memory-mapped I/O
-        self.cursor = self.conn.cursor()
-        self.pending_commits = 0  # Счетчик для батчинга коммитов
-        self.init_database()
+        try:
+            # Максимальная оптимизация SQLite
+            self.conn = sqlite3.connect('referral_bot.db', check_same_thread=False, timeout=10.0)
+            self.conn.row_factory = sqlite3.Row
+            # Включаем оптимизации SQLite (с обработкой ошибок)
+            try:
+                self.conn.execute('PRAGMA journal_mode=WAL')  # Write-Ahead Logging для скорости
+            except:
+                pass
+            try:
+                self.conn.execute('PRAGMA synchronous=NORMAL')  # Баланс скорости и надежности
+            except:
+                pass
+            try:
+                self.conn.execute('PRAGMA cache_size=10000')  # Увеличенный кэш
+            except:
+                pass
+            try:
+                self.conn.execute('PRAGMA temp_store=MEMORY')  # Временные данные в памяти
+            except:
+                pass
+            # Уменьшенный mmap_size для систем с ограниченной памятью (может вызывать segfault)
+            try:
+                self.conn.execute('PRAGMA mmap_size=67108864')  # 64MB вместо 256MB
+            except:
+                pass
+            self.cursor = self.conn.cursor()
+            self.pending_commits = 0  # Счетчик для батчинга коммитов
+            self.init_database()
+        except Exception as e:
+            print(f"Ошибка инициализации базы данных: {e}")
+            raise
     
     def init_database(self):
         """Инициализация базы данных"""
-        # Таблица пользователей
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                referral_code TEXT UNIQUE,
-                referrals_count INTEGER DEFAULT 0,
-                is_banned INTEGER DEFAULT 0,
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_check TIMESTAMP
-            )
-        ''')
+        try:
+            # Таблица пользователей
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id INTEGER PRIMARY KEY,
+                    username TEXT,
+                    first_name TEXT,
+                    referral_code TEXT UNIQUE,
+                    referrals_count INTEGER DEFAULT 0,
+                    is_banned INTEGER DEFAULT 0,
+                    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_check TIMESTAMP
+                )
+            ''')
         
-        # Таблица рефералов (кто кого пригласил)
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS referrals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                referrer_id INTEGER,
-                referred_id INTEGER,
-                subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_valid INTEGER DEFAULT 1,
-                FOREIGN KEY (referrer_id) REFERENCES users(user_id),
-                FOREIGN KEY (referred_id) REFERENCES users(user_id),
-                UNIQUE(referrer_id, referred_id)
-            )
-        ''')
+            # Таблица рефералов (кто кого пригласил)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS referrals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    referrer_id INTEGER,
+                    referred_id INTEGER,
+                    subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    is_valid INTEGER DEFAULT 1,
+                    FOREIGN KEY (referrer_id) REFERENCES users(user_id),
+                    FOREIGN KEY (referred_id) REFERENCES users(user_id),
+                    UNIQUE(referrer_id, referred_id)
+                )
+            ''')
+            
+            # Таблица проверок подписки (анти-чит)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS subscription_checks (
+                    user_id INTEGER,
+                    check_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    was_subscribed INTEGER,
+                    PRIMARY KEY (user_id, check_time)
+                )
+            ''')
+            
+            # Таблица истории подписок (для отслеживания отписок/подписок)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS subscription_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    action TEXT,
+                    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Таблица ожидающих рефералов (для обработки после подписки)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS pending_referrals (
+                    user_id INTEGER PRIMARY KEY,
+                    referrer_id INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id),
+                    FOREIGN KEY (referrer_id) REFERENCES users(user_id)
+                )
+            ''')
+            
+            # Таблица настроек конкурса
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS contest_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                )
+            ''')
+            
+            # Инициализация даты начала конкурса, если её нет
+            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('start_date',))
+            if not self.cursor.fetchone():
+                start_date = datetime.now().isoformat()
+                self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('start_date', start_date))
+            
+            # Инициализация победителя за 100 рефералов
+            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_100_winner',))
+            if not self.cursor.fetchone():
+                self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('first_100_winner', ''))
         
-        # Таблица проверок подписки (анти-чит)
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS subscription_checks (
-                user_id INTEGER,
-                check_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                was_subscribed INTEGER,
-                PRIMARY KEY (user_id, check_time)
-            )
-        ''')
-        
-        # Таблица истории подписок (для отслеживания отписок/подписок)
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS subscription_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                action TEXT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id)
-            )
-        ''')
-        
-        # Таблица ожидающих рефералов (для обработки после подписки)
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS pending_referrals (
-                user_id INTEGER PRIMARY KEY,
-                referrer_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id),
-                FOREIGN KEY (referrer_id) REFERENCES users(user_id)
-            )
-        ''')
-        
-        # Таблица настроек конкурса
-        self.cursor.execute('''
-            CREATE TABLE IF NOT EXISTS contest_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
-        
-        # Инициализация даты начала конкурса, если её нет
-        self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('start_date',))
-        if not self.cursor.fetchone():
-            start_date = datetime.now().isoformat()
-            self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('start_date', start_date))
-        
-        # Инициализация победителя за 100 рефералов
-        self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_100_winner',))
-        if not self.cursor.fetchone():
-            self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('first_100_winner', ''))
-        
-        # Создание индексов для оптимизации (ускоряют запросы)
-        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)')
-        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_referrals ON users(referrals_count)')
-        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id, is_valid)')
-        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)')
-        
-        self.conn.commit()
+            # Создание индексов для оптимизации (ускоряют запросы)
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_referrals ON users(referrals_count)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id, is_valid)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)')
+            
+            self.conn.commit()
+        except Exception as e:
+            print(f"Ошибка при инициализации базы данных: {e}")
+            self.conn.rollback()
+            raise
     
     # Кэш для часто используемых запросов
     _user_cache = {}
