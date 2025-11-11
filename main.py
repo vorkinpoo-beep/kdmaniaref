@@ -36,18 +36,20 @@ def generate_referral_code(user_id):
     code = hashlib.md5(f"{user_id}{BOT_TOKEN}".encode()).hexdigest()[:8].upper()
     return code
 
-def check_subscription(user_id):
+def check_subscription(user_id, force_check=False):
     """Проверка подписки пользователя на канал (МАКСИМАЛЬНО ОПТИМИЗИРОВАННАЯ)"""
     try:
-        # Быстрая проверка кэша (без блокировки для чтения)
-        cache_entry = subscription_cache.get(user_id)
-        if cache_entry:
-            cached_time, cached_result = cache_entry
-            time_diff = (datetime.now() - cached_time).total_seconds()
-            if time_diff < CHECK_SUBSCRIPTION_INTERVAL:
-                return cached_result
+        # Если force_check=True, игнорируем кэш (для проверки после подписки)
+        if not force_check:
+            # Быстрая проверка кэша (без блокировки для чтения)
+            cache_entry = subscription_cache.get(user_id)
+            if cache_entry:
+                cached_time, cached_result = cache_entry
+                time_diff = (datetime.now() - cached_time).total_seconds()
+                if time_diff < CHECK_SUBSCRIPTION_INTERVAL:
+                    return cached_result
         
-        # Проверка через API (только если кэш устарел)
+        # Проверка через API (только если кэш устарел или force_check=True)
         member = bot.get_chat_member(CHANNEL_ID, user_id)
         is_subscribed = member.status in ['member', 'administrator', 'creator']
         
@@ -68,6 +70,12 @@ def check_subscription(user_id):
     except Exception:
         # Возвращаем False при ошибке (не логируем для скорости)
         return False
+
+def clear_subscription_cache(user_id):
+    """Очистить кэш подписки для пользователя (для принудительной проверки)"""
+    with cache_lock:
+        if user_id in subscription_cache:
+            del subscription_cache[user_id]
 
 def validate_referral(referrer_id, referred_id):
     """Валидация реферала с анти-читом"""
@@ -129,20 +137,20 @@ def start_command(message):
         winners = db.get_top_users_for_prize(1)  # Используем функцию для призов
         first_100_winner = db.get_first_100_winner()
         
-        text = "🎉 **КОНКУРС ЗАВЕРШЕН!**\n\n"
+        text = "🎉 <b>КОНКУРС ЗАВЕРШЕН!</b>\n\n"
         
         if len(winners) >= 1:
-            text += f"🥇 **1 МЕСТО:**\n"
+            text += f"🥇 <b>1 МЕСТО:</b>\n"
             text += f"@{winners[0].get('username', 'N/A')} - {winners[0]['referrals_count']} рефералов\n"
             text += f"Приз: {PRIZE_1ST}\n\n"
         
         if first_100_winner:
-            text += f"⚡ **ПЕРВЫЙ, КТО НАБРАЛ 100 РЕФЕРАЛОВ:**\n"
+            text += f"⚡ <b>ПЕРВЫЙ, КТО НАБРАЛ 100 РЕФЕРАЛОВ:</b>\n"
             text += f"@{first_100_winner.get('username', 'N/A')} - {first_100_winner['referrals_count']} рефералов\n"
             text += f"Приз: {PRIZE_FIRST_100}\n\n"
         
         text += "Спасибо всем за участие! 🎊"
-        bot.reply_to(message, text, parse_mode='Markdown')
+        bot.reply_to(message, text, parse_mode='HTML')
         return
     
     # Получение или создание пользователя
@@ -173,8 +181,11 @@ def start_command(message):
         referrer_id = db.get_referrer_id(ref_code)
         
         if referrer_id and referrer_id != user_id:
-            # Проверяем подписку перед засчитыванием реферала
-            if check_subscription(user_id):
+            # Очищаем кэш для принудительной проверки (пользователь мог только что подписаться)
+            clear_subscription_cache(user_id)
+            
+            # Принудительная проверка подписки перед засчитыванием реферала (игнорируем кэш)
+            if check_subscription(user_id, force_check=True):
                 # Валидация реферала
                 is_valid, msg = validate_referral(referrer_id, user_id)
                 
@@ -191,10 +202,10 @@ def start_command(message):
                             if first_100_winner and first_100_winner['user_id'] == referrer_id:
                                 # Уведомление о победе за 100 рефералов (только если он первый)
                                 try:
-                                    winner_text = f"🎉 **ПОЗДРАВЛЯЕМ!**\n\n"
-                                    winner_text += f"Вы первым достигли **100 рефералов**!\n\n"
+                                    winner_text = f"🎉 ПОЗДРАВЛЯЕМ!\n\n"
+                                    winner_text += f"Вы первым достигли 100 рефералов!\n\n"
                                     winner_text += f"🏆 Ваш приз: {PRIZE_FIRST_100}"
-                                    bot.send_message(referrer_id, winner_text, parse_mode='Markdown')
+                                    bot.send_message(referrer_id, winner_text)
                                 except:
                                     pass
                         
@@ -226,20 +237,25 @@ def start_command(message):
     # Проверяем ожидающие рефералы (если пользователь только что подписался)
     pending_referrer_id = db.get_pending_referral(user_id)
     if pending_referrer_id:
-        # Валидация и добавление реферала
-        is_valid, msg = validate_referral(pending_referrer_id, user_id)
-        if is_valid:
-            if db.add_referral(pending_referrer_id, user_id):
-                bot.send_message(user_id, f"✅ {msg}")
+        # Очищаем кэш для принудительной проверки
+        clear_subscription_cache(user_id)
+        
+        # Принудительная проверка подписки (игнорируем кэш)
+        if check_subscription(user_id, force_check=True):
+            # Валидация и добавление реферала
+            is_valid, msg = validate_referral(pending_referrer_id, user_id)
+            if is_valid:
+                if db.add_referral(pending_referrer_id, user_id):
+                    bot.send_message(user_id, f"✅ {msg}")
         db.remove_pending_referral(user_id)
     
-    # Главное меню
+    # Главное меню (используем HTML вместо Markdown для избежания ошибок парсинга)
     text = f"🎉 Добро пожаловать, {first_name}!\n\n"
-    text += "🏆 **КОНКУРС РЕФЕРАЛОВ**\n\n"
-    text += "🎁 **ПРИЗЫ:**\n"
-    text += f"🥇 **1 место** (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
-    text += f"⚡ **Первый, кто наберет 100 рефералов**: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
-    text += "📋 **ПРАВИЛА:**\n"
+    text += "🏆 <b>КОНКУРС РЕФЕРАЛОВ</b>\n\n"
+    text += "🎁 <b>ПРИЗЫ:</b>\n"
+    text += f"🥇 <b>1 место</b> (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
+    text += f"⚡ <b>Первый, кто наберет 100 рефералов</b>: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
+    text += "📋 <b>ПРАВИЛА:</b>\n"
     text += f"• Минимальный порог для 1 места: {MIN_REFERRALS_FOR_PRIZE} приглашений\n"
     text += f"• Конкурс длится {CONTEST_DURATION_DAYS} дней\n"
     text += "• 1 место получает тот, кто пригласит больше всего друзей\n"
@@ -247,7 +263,7 @@ def start_command(message):
     text += "• Обязательна подписка на канал для засчитывания рефералов\n\n"
     text += "🔗 Получите свою реферальную ссылку и приглашайте друзей!"
     
-    bot.reply_to(message, text, reply_markup=get_start_menu(), parse_mode='Markdown')
+    bot.reply_to(message, text, reply_markup=get_start_menu(), parse_mode='HTML')
     
     # Админ меню
     if user_id == ADMIN_ID:
@@ -255,12 +271,19 @@ def start_command(message):
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def check_subscription_callback(call):
+    # МГНОВЕННЫЙ ОТВЕТ на callback (убирает загрузку кнопки)
+    bot.answer_callback_query(call.id, "⏳ Проверка...", show_alert=False)
+    
     user_id = call.from_user.id
     
-    if check_subscription(user_id):
+    # Очищаем кэш для принудительной проверки (пользователь мог только что подписаться)
+    clear_subscription_cache(user_id)
+    
+    # Принудительная проверка подписки (игнорируем кэш)
+    if check_subscription(user_id, force_check=True):
         bot.answer_callback_query(call.id, "✅ Вы подписаны!")
         
-        # Проверяем, есть ли ожидающий реферал
+        # Проверяем, есть ли ожидающий реферал (в фоне)
         pending_referrer_id = db.get_pending_referral(user_id)
         if pending_referrer_id:
             # Валидация и добавление реферала
@@ -305,9 +328,9 @@ def my_referral_callback(call):
     bot_username = get_bot_username()
     referral_link = f"https://t.me/{bot_username}?start={referral_code}"
     
-    text = "🔗 **Ваша реферальная ссылка:**\n\n"
-    text += f"`{referral_link}`\n\n"
-    text += f"📊 Ваших рефералов: **{referrals_count}**\n\n"
+    text = "🔗 <b>Ваша реферальная ссылка:</b>\n\n"
+    text += f"<code>{referral_link}</code>\n\n"
+    text += f"📊 Ваших рефералов: <b>{referrals_count}</b>\n\n"
     text += "📋 Скопируйте ссылку и отправьте друзьям!"
     
     keyboard = types.InlineKeyboardMarkup()
@@ -316,7 +339,7 @@ def my_referral_callback(call):
     
     try:
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, 
-                             reply_markup=keyboard, parse_mode='Markdown')
+                             reply_markup=keyboard, parse_mode='HTML')
     except Exception:
         pass  # Уже ответили на callback
 
@@ -344,12 +367,12 @@ def top_users_callback(call):
         return
     
     # Быстрое формирование текста
-    text = "🏆 **ТОП участников:**\n\n"
+    text = "🏆 <b>ТОП участников:</b>\n\n"
     for i, user in enumerate(top_users, 1):
         medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
         username = user.get('username', 'N/A')
         count = user['referrals_count']
-        text += f"{medal} @{username} - **{count}** рефералов\n"
+        text += f"{medal} @{username} - <b>{count}</b> рефералов\n"
     
     text += f"\n📋 Минимальный порог для 1 места: {MIN_REFERRALS_FOR_PRIZE} приглашений"
     
@@ -359,7 +382,7 @@ def top_users_callback(call):
     
     try:
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=keyboard, parse_mode='Markdown')
+                             reply_markup=keyboard, parse_mode='HTML')
     except Exception:
         pass  # Уже ответили на callback
 
@@ -369,13 +392,13 @@ def rules_callback(call):
     bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
     
     # Формируем текст (без запросов к БД)
-    text = "📋 **ПРАВИЛА КОНКУРСА:**\n\n"
-    text += f"🎯 **Минимальный порог для 1 места:** {MIN_REFERRALS_FOR_PRIZE} приглашений\n\n"
-    text += f"⏰ **Длительность:** {CONTEST_DURATION_DAYS} дней\n\n"
-    text += "🏆 **Призы:**\n"
-    text += f"🥇 **1 место** (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
-    text += f"⚡ **Первый, кто наберет 100 рефералов**: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
-    text += "📌 **Важно:**\n"
+    text = "📋 <b>ПРАВИЛА КОНКУРСА:</b>\n\n"
+    text += f"🎯 <b>Минимальный порог для 1 места:</b> {MIN_REFERRALS_FOR_PRIZE} приглашений\n\n"
+    text += f"⏰ <b>Длительность:</b> {CONTEST_DURATION_DAYS} дней\n\n"
+    text += "🏆 <b>Призы:</b>\n"
+    text += f"🥇 <b>1 место</b> (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
+    text += f"⚡ <b>Первый, кто наберет 100 рефералов</b>: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
+    text += "📌 <b>Важно:</b>\n"
     text += "• Реферал должен быть подписан на канал\n"
     text += "• Запрещено использование ботов и накрутка\n"
     text += "• Система автоматически блокирует подозрительную активность\n"
@@ -391,7 +414,7 @@ def rules_callback(call):
     
     try:
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=keyboard, parse_mode='Markdown')
+                             reply_markup=keyboard, parse_mode='HTML')
     except Exception:
         pass  # Уже ответили на callback
 
@@ -404,15 +427,15 @@ def back_to_menu_callback(call):
     first_name = call.from_user.first_name
     
     text = f"🎉 Добро пожаловать, {first_name}!\n\n"
-    text += "🏆 **КОНКУРС РЕФЕРАЛОВ**\n\n"
-    text += "🎁 **ПРИЗЫ:**\n"
-    text += f"🥇 **1 место** (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
-    text += f"⚡ **Первый, кто наберет 100 рефералов**: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
+    text += "🏆 <b>КОНКУРС РЕФЕРАЛОВ</b>\n\n"
+    text += "🎁 <b>ПРИЗЫ:</b>\n"
+    text += f"🥇 <b>1 место</b> (больше всех рефералов): NFT Snoop Dogg\n{PRIZE_1ST}\n\n"
+    text += f"⚡ <b>Первый, кто наберет 100 рефералов</b>: NFT Instant Ramen\n{PRIZE_FIRST_100}\n\n"
     text += "🔗 Получите свою реферальную ссылку и приглашайте друзей!"
     
     try:
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                             reply_markup=get_start_menu(), parse_mode='Markdown')
+                             reply_markup=get_start_menu(), parse_mode='HTML')
     except Exception:
         pass  # Уже ответили на callback
 
@@ -435,11 +458,11 @@ def admin_callback(call):
         
         top_users = db.get_top_users_for_prize(5)  # Для статистики админа используем функцию для призов
         
-        text = "📊 **СТАТИСТИКА:**\n\n"
+        text = "📊 <b>СТАТИСТИКА:</b>\n\n"
         text += f"👥 Всего пользователей: {total_users}\n"
         text += f"🔗 Всего рефералов: {total_referrals}\n"
         text += f"🚫 Забанено: {banned_users}\n\n"
-        text += "🏆 **ТОП-5:**\n"
+        text += "🏆 <b>ТОП-5:</b>\n"
         
         for i, user in enumerate(top_users, 1):
             username = user.get('username', 'N/A')
@@ -451,7 +474,7 @@ def admin_callback(call):
         
         try:
             bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
-                                 reply_markup=keyboard, parse_mode='Markdown')
+                                 reply_markup=keyboard, parse_mode='HTML')
         except Exception:
             bot.answer_callback_query(call.id, "✅ Информация актуальна!")
     
@@ -629,15 +652,15 @@ def notify_contest_end():
         winners = db.get_top_users_for_prize(1)  # Используем функцию для призов
         first_100_winner = db.get_first_100_winner()
         
-        text = "🎉 **КОНКУРС ЗАВЕРШЕН!**\n\n"
+        text = "🎉 <b>КОНКУРС ЗАВЕРШЕН!</b>\n\n"
         
         if len(winners) >= 1:
-            text += f"🥇 **1 МЕСТО:**\n"
+            text += f"🥇 <b>1 МЕСТО:</b>\n"
             text += f"@{winners[0].get('username', 'N/A')} - {winners[0]['referrals_count']} рефералов\n"
             text += f"Приз: {PRIZE_1ST}\n\n"
         
         if first_100_winner:
-            text += f"⚡ **ПЕРВЫЙ, КТО НАБРАЛ 100 РЕФЕРАЛОВ:**\n"
+            text += f"⚡ <b>ПЕРВЫЙ, КТО НАБРАЛ 100 РЕФЕРАЛОВ:</b>\n"
             text += f"@{first_100_winner.get('username', 'N/A')} - {first_100_winner['referrals_count']} рефералов\n"
             text += f"Приз: {PRIZE_FIRST_100}\n\n"
         
@@ -650,7 +673,7 @@ def notify_contest_end():
             batch = all_users[i:i+batch_size]
             for user in batch:
                 try:
-                    bot.send_message(user['user_id'], text, parse_mode='Markdown')
+                    bot.send_message(user['user_id'], text, parse_mode='HTML')
                 except:
                     pass
             time.sleep(0.1)  # Небольшая задержка между батчами
