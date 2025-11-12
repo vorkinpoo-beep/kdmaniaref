@@ -739,16 +739,18 @@ import json
 # Патчим get_updates на уровне JSON - фильтруем story ДО десериализации
 _original_get_updates = telebot.apihelper.get_updates
 
-def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=None):
+def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=None, long_polling_timeout=20):
     """Безопасное получение обновлений с фильтрацией story"""
     try:
         # Вызываем оригинальную функцию, но перехватываем JSON
         import requests
         url = f"https://api.telegram.org/bot{token}/getUpdates"
+        # Используем long_polling_timeout, если указан, иначе timeout
+        poll_timeout = long_polling_timeout if long_polling_timeout is not None else timeout
         params = {
             'offset': offset,
             'limit': limit,
-            'timeout': timeout
+            'timeout': poll_timeout
         }
         # Добавляем allowed_updates, если указаны
         if allowed_updates:
@@ -756,7 +758,7 @@ def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=
         # Удаляем None параметры
         params = {k: v for k, v in params.items() if v is not None}
         
-        response = requests.get(url, params=params, timeout=timeout + 5)
+        response = requests.get(url, params=params, timeout=poll_timeout + 5)
         response.raise_for_status()
         result = response.json()
         
@@ -798,7 +800,7 @@ def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=
             return []
         # Для других ошибок используем оригинальную функцию
         try:
-            return _original_get_updates(token, offset, limit, timeout, allowed_updates)
+            return _original_get_updates(token, offset, limit, timeout, allowed_updates, long_polling_timeout)
         except:
             return []
 
