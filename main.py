@@ -728,7 +728,112 @@ def notify_contest_end():
 # Запуск фоновой задачи
 threading.Thread(target=background_anti_cheat, daemon=True).start()
 
+# Обработка ошибок с неизвестными типами обновлений (Stories и др.)
+# Проблема: библиотека pyTelegramBotAPI 4.14.0 не может обработать новые типы обновлений (Stories)
+# Решение: патчим десериализацию для игнорирования Story обновлений
+
+import telebot.apihelper
+import telebot.types
+import json
+
+# Патчим get_updates на уровне JSON - фильтруем story ДО десериализации
+_original_get_updates = telebot.apihelper.get_updates
+
+def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=None):
+    """Безопасное получение обновлений с фильтрацией story"""
+    try:
+        # Вызываем оригинальную функцию, но перехватываем JSON
+        import requests
+        url = f"https://api.telegram.org/bot{token}/getUpdates"
+        params = {
+            'offset': offset,
+            'limit': limit,
+            'timeout': timeout
+        }
+        # Добавляем allowed_updates, если указаны
+        if allowed_updates:
+            params['allowed_updates'] = json.dumps(allowed_updates)
+        # Удаляем None параметры
+        params = {k: v for k, v in params.items() if v is not None}
+        
+        response = requests.get(url, params=params, timeout=timeout + 5)
+        response.raise_for_status()
+        result = response.json()
+        
+        # Фильтруем story из JSON ПЕРЕД десериализацией
+        if result.get('ok') and 'result' in result:
+            updates = result['result']
+            if isinstance(updates, list):
+                filtered_updates = []
+                for update in updates:
+                    if isinstance(update, dict):
+                        # Удаляем story из message
+                        if 'message' in update and isinstance(update['message'], dict):
+                            if 'story' in update['message']:
+                                continue  # Пропускаем обновления со Stories
+                        # Удаляем story напрямую
+                        if 'story' in update:
+                            continue  # Пропускаем обновления со Stories
+                    filtered_updates.append(update)
+                result['result'] = filtered_updates
+        
+        # Теперь десериализуем (но story уже удалены)
+        if result.get('ok') and 'result' in result:
+            updates_list = []
+            for update_json in result['result']:
+                try:
+                    update_obj = telebot.types.Update.de_json(update_json)
+                    if update_obj:
+                        updates_list.append(update_obj)
+                except Exception as e:
+                    # Пропускаем проблемные обновления
+                    if "Story" not in str(e) and "unexpected keyword argument" not in str(e):
+                        raise
+            return updates_list
+        
+        return []
+    except Exception as e:
+        # Игнорируем ошибки с Story
+        if "Story" in str(e) or "unexpected keyword argument" in str(e):
+            return []
+        # Для других ошибок используем оригинальную функцию
+        try:
+            return _original_get_updates(token, offset, limit, timeout, allowed_updates)
+        except:
+            return []
+
+telebot.apihelper.get_updates = safe_get_updates
+
 if __name__ == "__main__":
-    print("Бот запущен!")
-    bot.polling(none_stop=True)
+    try:
+        print("Инициализация бота...")
+        print("Проверка базы данных...")
+        # Проверка подключения к базе данных
+        test_user = db.get_user(1)  # Тестовая проверка
+        print("База данных подключена успешно!")
+        
+        print("Проверка токена бота...")
+        # Проверка токена бота
+        bot_info = bot.get_me()
+        print(f"Бот подключен: @{bot_info.username}")
+        
+        print("Бот запущен!")
+        # Используем allowed_updates для фильтрации только нужных типов
+        # skip_pending=True пропускает старые обновления (включая те, что содержат Stories)
+        try:
+            bot.polling(none_stop=True, interval=1, timeout=20, skip_pending=True, allowed_updates=['message', 'callback_query', 'edited_message'])
+        except Exception as e:
+            # Если ошибка связана со Story, пропускаем и продолжаем
+            if "Story" in str(e) or "unexpected keyword argument" in str(e):
+                print(f"Предупреждение: пропущено обновление со Story: {e}")
+                # Продолжаем polling
+                bot.polling(none_stop=True, interval=1, timeout=20, skip_pending=True, allowed_updates=['message', 'callback_query', 'edited_message'])
+            else:
+                raise
+    except KeyboardInterrupt:
+        print("\nБот остановлен пользователем")
+    except Exception as e:
+        print(f"Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
 
