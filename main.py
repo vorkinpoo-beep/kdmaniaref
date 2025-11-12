@@ -730,86 +730,67 @@ threading.Thread(target=background_anti_cheat, daemon=True).start()
 
 # Обработка ошибок с неизвестными типами обновлений (Stories и др.)
 # Проблема: библиотека pyTelegramBotAPI 4.14.0 не может обработать новые типы обновлений (Stories)
-# Решение: патчим десериализацию Update для игнорирования Story обновлений
+# Решение: патчим десериализацию для игнорирования Story обновлений
 
-import telebot.apihelper
 import telebot.types
-import json
 
-# Патчим десериализацию Update для игнорирования Story
-_original_update_de_json = telebot.types.Update.de_json
+# Патчим десериализацию Message для удаления story перед десериализацией
+_original_message_de_json = telebot.types.Message.de_json
 
-def safe_update_de_json(json_string):
-    """Безопасная десериализация Update с обработкой Story"""
+def safe_message_de_json(json_string):
+    """Безопасная десериализация Message с удалением Story"""
     try:
         # Если это словарь, удаляем story перед десериализацией
         if isinstance(json_string, dict):
             json_string = json_string.copy()
+            if 'story' in json_string:
+                del json_string['story']
+        # Вызываем оригинальную функцию десериализации
+        return _original_message_de_json(json_string)
+    except Exception as e:
+        # Игнорируем ошибки с Story
+        error_str = str(e)
+        if "Story" in error_str or "unexpected keyword argument" in error_str:
+            return None
+        # Для других ошибок пробрасываем исключение
+        raise
+
+# Заменяем метод десериализации Message
+telebot.types.Message.de_json = staticmethod(safe_message_de_json)
+
+# Патчим десериализацию Update для пропуска обновлений со Stories
+_original_update_de_json = telebot.types.Update.de_json
+
+def safe_update_de_json(json_string):
+    """Безопасная десериализация Update с пропуском Story обновлений"""
+    try:
+        # Если это словарь, проверяем наличие story
+        if isinstance(json_string, dict):
+            # Пропускаем обновления со Stories полностью
+            if 'story' in json_string:
+                return None
             
             # Удаляем story из message, если есть
             if 'message' in json_string and isinstance(json_string['message'], dict):
-                message = json_string['message'].copy()
-                if 'story' in message:
+                if 'story' in json_string['message']:
+                    # Создаем копию без story
+                    json_string = json_string.copy()
+                    message = json_string['message'].copy()
                     del message['story']
-                json_string['message'] = message
-            
-            # Если есть story напрямую в update, пропускаем это обновление
-            if 'story' in json_string:
-                return None  # Возвращаем None, чтобы пропустить обновление
+                    json_string['message'] = message
         
         # Вызываем оригинальную функцию десериализации
         return _original_update_de_json(json_string)
     except Exception as e:
         # Игнорируем ошибки с Story
-        if "Story" in str(e) or "unexpected keyword argument" in str(e) or "chat" in str(e).lower():
+        error_str = str(e)
+        if "Story" in error_str or "unexpected keyword argument" in error_str:
             return None
         # Для других ошибок пробрасываем исключение
         raise
 
-# Заменяем метод десериализации
+# Заменяем метод десериализации Update
 telebot.types.Update.de_json = staticmethod(safe_update_de_json)
-
-# Патчим _make_request для фильтрации story из JSON ответа ПЕРЕД десериализацией
-_original_make_request = telebot.apihelper._make_request
-
-def safe_make_request(token, method_name, params=None, method='post', files=None):
-    """Безопасный запрос с фильтрацией story из ответов getUpdates"""
-    try:
-        # Вызываем оригинальную функцию
-        result = _original_make_request(token, method_name, params, method, files)
-        
-        # Если это getUpdates, фильтруем story из JSON ответа
-        if method_name == 'getUpdates' and result:
-            if isinstance(result, dict) and result.get('ok') and 'result' in result:
-                updates = result['result']
-                if isinstance(updates, list):
-                    filtered_updates = []
-                    for update in updates:
-                        if isinstance(update, dict):
-                            # Пропускаем обновления со Stories
-                            if 'story' in update:
-                                continue
-                            # Удаляем story из message, если есть
-                            if 'message' in update and isinstance(update['message'], dict):
-                                message = update['message'].copy()
-                                if 'story' in message:
-                                    del message['story']
-                                update['message'] = message
-                            filtered_updates.append(update)
-                        else:
-                            filtered_updates.append(update)
-                    result['result'] = filtered_updates
-        
-        return result
-    except Exception as e:
-        # Игнорируем ошибки с Story
-        if "Story" in str(e) or "unexpected keyword argument" in str(e):
-            if method_name == 'getUpdates':
-                return {'ok': True, 'result': []}
-        # Для других ошибок пробрасываем исключение
-        raise
-
-telebot.apihelper._make_request = safe_make_request
 
 if __name__ == "__main__":
     try:
@@ -825,18 +806,10 @@ if __name__ == "__main__":
         print(f"Бот подключен: @{bot_info.username}")
         
         print("Бот запущен!")
-        # Используем allowed_updates для фильтрации только нужных типов
+        # Используем allowed_updates для фильтрации только нужных типов обновлений
         # skip_pending=True пропускает старые обновления (включая те, что содержат Stories)
-        try:
-            bot.polling(none_stop=True, interval=1, timeout=20, skip_pending=True, allowed_updates=['message', 'callback_query', 'edited_message'])
-        except Exception as e:
-            # Если ошибка связана со Story, пропускаем и продолжаем
-            if "Story" in str(e) or "unexpected keyword argument" in str(e):
-                print(f"Предупреждение: пропущено обновление со Story: {e}")
-                # Продолжаем polling
-                bot.polling(none_stop=True, interval=1, timeout=20, skip_pending=True, allowed_updates=['message', 'callback_query', 'edited_message'])
-            else:
-                raise
+        # Обрабатываем ошибки Story внутри polling через патч Message.de_json
+        bot.polling(none_stop=True, interval=1, timeout=20, skip_pending=True, allowed_updates=['message', 'callback_query', 'edited_message'])
     except KeyboardInterrupt:
         print("\nБот остановлен пользователем")
     except Exception as e:
