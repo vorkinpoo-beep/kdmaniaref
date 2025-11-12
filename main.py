@@ -730,81 +730,86 @@ threading.Thread(target=background_anti_cheat, daemon=True).start()
 
 # Обработка ошибок с неизвестными типами обновлений (Stories и др.)
 # Проблема: библиотека pyTelegramBotAPI 4.14.0 не может обработать новые типы обновлений (Stories)
-# Решение: патчим десериализацию для игнорирования Story обновлений
+# Решение: патчим десериализацию Update для игнорирования Story обновлений
 
 import telebot.apihelper
 import telebot.types
 import json
 
-# Патчим get_updates на уровне JSON - фильтруем story ДО десериализации
-_original_get_updates = telebot.apihelper.get_updates
+# Патчим десериализацию Update для игнорирования Story
+_original_update_de_json = telebot.types.Update.de_json
 
-def safe_get_updates(token, offset=None, limit=100, timeout=20, allowed_updates=None, long_polling_timeout=20):
-    """Безопасное получение обновлений с фильтрацией story"""
+def safe_update_de_json(json_string):
+    """Безопасная десериализация Update с обработкой Story"""
     try:
-        # Вызываем оригинальную функцию, но перехватываем JSON
-        import requests
-        url = f"https://api.telegram.org/bot{token}/getUpdates"
-        # Используем long_polling_timeout, если указан, иначе timeout
-        poll_timeout = long_polling_timeout if long_polling_timeout is not None else timeout
-        params = {
-            'offset': offset,
-            'limit': limit,
-            'timeout': poll_timeout
-        }
-        # Добавляем allowed_updates, если указаны
-        if allowed_updates:
-            params['allowed_updates'] = json.dumps(allowed_updates)
-        # Удаляем None параметры
-        params = {k: v for k, v in params.items() if v is not None}
+        # Если это словарь, удаляем story перед десериализацией
+        if isinstance(json_string, dict):
+            json_string = json_string.copy()
+            
+            # Удаляем story из message, если есть
+            if 'message' in json_string and isinstance(json_string['message'], dict):
+                message = json_string['message'].copy()
+                if 'story' in message:
+                    del message['story']
+                json_string['message'] = message
+            
+            # Если есть story напрямую в update, пропускаем это обновление
+            if 'story' in json_string:
+                return None  # Возвращаем None, чтобы пропустить обновление
         
-        response = requests.get(url, params=params, timeout=poll_timeout + 5)
-        response.raise_for_status()
-        result = response.json()
+        # Вызываем оригинальную функцию десериализации
+        return _original_update_de_json(json_string)
+    except Exception as e:
+        # Игнорируем ошибки с Story
+        if "Story" in str(e) or "unexpected keyword argument" in str(e) or "chat" in str(e).lower():
+            return None
+        # Для других ошибок пробрасываем исключение
+        raise
+
+# Заменяем метод десериализации
+telebot.types.Update.de_json = staticmethod(safe_update_de_json)
+
+# Патчим _make_request для фильтрации story из JSON ответа ПЕРЕД десериализацией
+_original_make_request = telebot.apihelper._make_request
+
+def safe_make_request(token, method_name, params=None, method='post', files=None):
+    """Безопасный запрос с фильтрацией story из ответов getUpdates"""
+    try:
+        # Вызываем оригинальную функцию
+        result = _original_make_request(token, method_name, params, method, files)
         
-        # Фильтруем story из JSON ПЕРЕД десериализацией
-        if result.get('ok') and 'result' in result:
-            updates = result['result']
-            if isinstance(updates, list):
-                filtered_updates = []
-                for update in updates:
-                    if isinstance(update, dict):
-                        # Удаляем story из message
-                        if 'message' in update and isinstance(update['message'], dict):
-                            if 'story' in update['message']:
-                                continue  # Пропускаем обновления со Stories
-                        # Удаляем story напрямую
-                        if 'story' in update:
-                            continue  # Пропускаем обновления со Stories
-                    filtered_updates.append(update)
-                result['result'] = filtered_updates
+        # Если это getUpdates, фильтруем story из JSON ответа
+        if method_name == 'getUpdates' and result:
+            if isinstance(result, dict) and result.get('ok') and 'result' in result:
+                updates = result['result']
+                if isinstance(updates, list):
+                    filtered_updates = []
+                    for update in updates:
+                        if isinstance(update, dict):
+                            # Пропускаем обновления со Stories
+                            if 'story' in update:
+                                continue
+                            # Удаляем story из message, если есть
+                            if 'message' in update and isinstance(update['message'], dict):
+                                message = update['message'].copy()
+                                if 'story' in message:
+                                    del message['story']
+                                update['message'] = message
+                            filtered_updates.append(update)
+                        else:
+                            filtered_updates.append(update)
+                    result['result'] = filtered_updates
         
-        # Теперь десериализуем (но story уже удалены)
-        if result.get('ok') and 'result' in result:
-            updates_list = []
-            for update_json in result['result']:
-                try:
-                    update_obj = telebot.types.Update.de_json(update_json)
-                    if update_obj:
-                        updates_list.append(update_obj)
-                except Exception as e:
-                    # Пропускаем проблемные обновления
-                    if "Story" not in str(e) and "unexpected keyword argument" not in str(e):
-                        raise
-            return updates_list
-        
-        return []
+        return result
     except Exception as e:
         # Игнорируем ошибки с Story
         if "Story" in str(e) or "unexpected keyword argument" in str(e):
-            return []
-        # Для других ошибок используем оригинальную функцию
-        try:
-            return _original_get_updates(token, offset, limit, timeout, allowed_updates, long_polling_timeout)
-        except:
-            return []
+            if method_name == 'getUpdates':
+                return {'ok': True, 'result': []}
+        # Для других ошибок пробрасываем исключение
+        raise
 
-telebot.apihelper.get_updates = safe_get_updates
+telebot.apihelper._make_request = safe_make_request
 
 if __name__ == "__main__":
     try:
