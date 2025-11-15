@@ -13,11 +13,11 @@ ADMIN_USERNAME = "@Ksodydes"
 # Настройки конкурса
 CONTEST_DURATION_DAYS = 14
 MIN_REFERRALS_FOR_PRIZE = 50
-FIRST_100_REFERRALS_PRIZE = 100  # Кто первый наберет 100 рефералов
+FIRST_50_REFERRALS_PRIZE = 50  # Кто первый наберет 50 рефералов
 
 # Призы
 PRIZE_1ST = "https://t.me/nft/SnoopDogg-552170"  # 1 место (больше всех рефералов)
-PRIZE_FIRST_100 = "https://t.me/nft/InstantRamen-284068"  # Первый, кто наберет 100 рефералов
+PRIZE_FIRST_50 = "https://t.me/nft/InstantRamen-284068"  # Первый, кто наберет 50 рефералов
 
 # База данных
 DATABASE_FILE = "referral_bot.db"
