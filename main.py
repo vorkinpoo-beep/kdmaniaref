@@ -4,6 +4,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from config import *
+import random
 from database import Database
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -116,9 +117,18 @@ def get_admin_menu():
     """Меню админа"""
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"))
+    keyboard.add(types.InlineKeyboardButton("🍪 Конкурс на печеньку", callback_data="admin_clover"))
     keyboard.add(types.InlineKeyboardButton("🚫 Забанить пользователя", callback_data="admin_ban"))
     keyboard.add(types.InlineKeyboardButton("✅ Разбанить пользователя", callback_data="admin_unban"))
     keyboard.add(types.InlineKeyboardButton("🔄 Сбросить конкурс", callback_data="admin_reset"))
+    return keyboard
+
+def get_clover_contest_menu():
+    """Меню конкурса на печеньку"""
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🎲 Подвести итоги", callback_data="clover_finish"))
+    keyboard.add(types.InlineKeyboardButton("📢 Уведомить всех", callback_data="clover_notify_all"))
+    keyboard.add(types.InlineKeyboardButton("◀️ Назад", callback_data="admin_back"))
     return keyboard
 
 @bot.message_handler(commands=['start'])
@@ -196,6 +206,23 @@ def start_command(message):
                         referrer_user = db.get_user(referrer_id)
                         referrals_count = referrer_user['referrals_count'] if referrer_user else 0
                         
+                        # Проверка на достижение 3 рефералов (конкурс на печеньку)
+                        if referrals_count >= CLOVER_CONTEST_MIN_REFERRALS:
+                            # Добавляем в участники, если еще не добавлен
+                            if not db.is_clover_participant(referrer_id):
+                                db.add_clover_participant(referrer_id)
+                            
+                            # Отправляем уведомление о участии, если еще не отправляли
+                            if not db.is_clover_notified(referrer_id):
+                                try:
+                                    participation_text = f"🎉 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+                                    participation_text += f"Вы пригласили {referrals_count} рефералов и стали участником конкурса на CLOVER PIN!\n\n"
+                                    participation_text += f"🍪 {CLOVER_CONTEST_NOTIFICATION_TEXT}"
+                                    bot.send_message(referrer_id, participation_text, parse_mode='HTML')
+                                    db.mark_clover_notified(referrer_id)
+                                except:
+                                    pass
+                        
                         # Проверка на достижение 50 рефералов (проверяем, стал ли этот пользователь победителем)
                         if referrals_count >= 50:
                             first_50_winner = db.get_first_50_winner()
@@ -246,6 +273,26 @@ def start_command(message):
             is_valid, msg = validate_referral(pending_referrer_id, user_id)
             if is_valid:
                 if db.add_referral(pending_referrer_id, user_id):
+                    # Проверка на достижение 3 рефералов (конкурс на печеньку)
+                    referrer_user = db.get_user(pending_referrer_id)
+                    referrals_count = referrer_user['referrals_count'] if referrer_user else 0
+                    
+                    if referrals_count >= CLOVER_CONTEST_MIN_REFERRALS:
+                        # Добавляем в участники, если еще не добавлен
+                        if not db.is_clover_participant(pending_referrer_id):
+                            db.add_clover_participant(pending_referrer_id)
+                        
+                        # Отправляем уведомление о участии, если еще не отправляли
+                        if not db.is_clover_notified(pending_referrer_id):
+                            try:
+                                participation_text = f"🎉 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+                                participation_text += f"Вы пригласили {referrals_count} рефералов и стали участником конкурса на CLOVER PIN!\n\n"
+                                participation_text += f"🍪 {CLOVER_CONTEST_NOTIFICATION_TEXT}"
+                                bot.send_message(pending_referrer_id, participation_text, parse_mode='HTML')
+                                db.mark_clover_notified(pending_referrer_id)
+                            except:
+                                pass
+                    
                     bot.send_message(user_id, f"✅ {msg}")
         db.remove_pending_referral(user_id)
     
@@ -296,6 +343,26 @@ def check_subscription_callback(call):
             is_valid, msg = validate_referral(pending_referrer_id, user_id)
             if is_valid:
                 if db.add_referral(pending_referrer_id, user_id):
+                    # Проверка на достижение 3 рефералов (конкурс на печеньку)
+                    referrer_user = db.get_user(pending_referrer_id)
+                    referrals_count = referrer_user['referrals_count'] if referrer_user else 0
+                    
+                    if referrals_count >= CLOVER_CONTEST_MIN_REFERRALS:
+                        # Добавляем в участники, если еще не добавлен
+                        if not db.is_clover_participant(pending_referrer_id):
+                            db.add_clover_participant(pending_referrer_id)
+                        
+                        # Отправляем уведомление о участии, если еще не отправляли
+                        if not db.is_clover_notified(pending_referrer_id):
+                            try:
+                                participation_text = f"🎉 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+                                participation_text += f"Вы пригласили {referrals_count} рефералов и стали участником конкурса на CLOVER PIN!\n\n"
+                                participation_text += f"🍪 {CLOVER_CONTEST_NOTIFICATION_TEXT}"
+                                bot.send_message(pending_referrer_id, participation_text, parse_mode='HTML')
+                                db.mark_clover_notified(pending_referrer_id)
+                            except:
+                                pass
+                    
                     bot.send_message(user_id, f"✅ {msg}")
             db.remove_pending_referral(user_id)
         
@@ -522,6 +589,23 @@ def admin_callback(call):
         bot.send_message(user_id, "Введите ID пользователя для разбана:")
         bot.register_next_step_handler(call.message, admin_unban_handler)
     
+    elif call.data == "admin_clover":
+        text = "🍪 <b>КОНКУРС НА ПЕЧЕНЬКУ</b>\n\n"
+        participants = db.get_all_clover_participants()
+        text += f"👥 Участников: <b>{len(participants)}</b>\n\n"
+        text += f"📋 <b>Условия:</b>\n"
+        text += f"• Минимум {CLOVER_CONTEST_MIN_REFERRALS} рефералов для участия\n"
+        text += f"• Ссылка на конкурс: {CLOVER_CONTEST_LINK}\n\n"
+        text += "Выберите действие:"
+        try:
+            bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=get_clover_contest_menu(), parse_mode='HTML')
+        except Exception:
+            try:
+                bot.answer_callback_query(call.id, "✅")
+            except:
+                pass
+    
     elif call.data == "admin_reset":
         keyboard = types.InlineKeyboardMarkup()
         keyboard.add(types.InlineKeyboardButton("✅ Подтвердить", callback_data="admin_reset_confirm"))
@@ -545,6 +629,98 @@ def admin_callback(call):
                 bot.answer_callback_query(call.id, "✅")
             except:
                 pass  # Игнорируем ошибку, если callback устарел
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("clover_"))
+def clover_contest_callback(call):
+    # МГНОВЕННЫЙ ОТВЕТ на callback
+    try:
+        bot.answer_callback_query(call.id, "⏳ Загрузка...", show_alert=False)
+    except:
+        pass  # Игнорируем ошибку, если callback устарел
+    
+    user_id = call.from_user.id
+    if user_id != ADMIN_ID:
+        return
+    
+    if call.data == "clover_finish":
+        # Подведение итогов - рандомный выбор победителя
+        participants = db.get_all_clover_participants()
+        
+        if not participants:
+            text = "❌ Нет участников конкурса на печеньку!"
+            try:
+                bot.edit_message_text(text, call.message.chat.id, call.message.message_id,
+                                     reply_markup=get_clover_contest_menu())
+            except Exception:
+                pass
+            return
+        
+        # Рандомный выбор победителя
+        winner = random.choice(participants)
+        winner_id = winner['user_id']
+        winner_username = winner.get('username', 'N/A')
+        winner_name = winner.get('first_name', 'N/A')
+        winner_referrals = winner.get('referrals_count', 0)
+        
+        # Уведомление победителю
+        try:
+            winner_text = f"🎉 <b>ПОЗДРАВЛЯЕМ! ВЫ ПОБЕДИТЕЛЬ!</b>\n\n"
+            winner_text += f"Вы выиграли конкурс на CLOVER PIN!\n\n"
+            winner_text += f"🍪 Ваш приз: {CLOVER_CONTEST_LINK}\n\n"
+            winner_text += f"📊 Ваши рефералы: {winner_referrals}"
+            bot.send_message(winner_id, winner_text, parse_mode='HTML')
+        except Exception as e:
+            pass
+        
+        # Уведомление админу
+        admin_text = f"🎉 <b>ПОБЕДИТЕЛЬ КОНКУРСА НА ПЕЧЕНЬКУ:</b>\n\n"
+        admin_text += f"👤 <b>Победитель:</b> @{winner_username}\n"
+        admin_text += f"📛 Имя: {winner_name}\n"
+        admin_text += f"🆔 ID: {winner_id}\n"
+        admin_text += f"📊 Рефералов: {winner_referrals}\n\n"
+        admin_text += f"🍪 Приз: {CLOVER_CONTEST_LINK}\n\n"
+        admin_text += f"👥 Всего участников было: {len(participants)}"
+        
+        try:
+            bot.edit_message_text(admin_text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=get_clover_contest_menu(), parse_mode='HTML')
+        except Exception:
+            try:
+                bot.send_message(user_id, admin_text, parse_mode='HTML')
+            except:
+                pass
+    
+    elif call.data == "clover_notify_all":
+        # Массовая рассылка о конкурсе всем пользователям
+        all_users = db.get_all_users()
+        sent = 0
+        failed = 0
+        
+        # Отправляем сообщение батчами
+        batch_size = 20
+        for i in range(0, len(all_users), batch_size):
+            batch = all_users[i:i+batch_size]
+            for user in batch:
+                try:
+                    bot.send_message(user['user_id'], CLOVER_CONTEST_NOTIFICATION_TEXT, parse_mode='HTML')
+                    sent += 1
+                except:
+                    failed += 1
+            time.sleep(0.1)  # Небольшая задержка между батчами
+        
+        result_text = f"✅ <b>РАССЫЛКА ЗАВЕРШЕНА</b>\n\n"
+        result_text += f"📤 Отправлено: <b>{sent}</b>\n"
+        result_text += f"❌ Ошибок: <b>{failed}</b>\n"
+        result_text += f"👥 Всего пользователей: <b>{len(all_users)}</b>"
+        
+        try:
+            bot.edit_message_text(result_text, call.message.chat.id, call.message.message_id,
+                                 reply_markup=get_clover_contest_menu(), parse_mode='HTML')
+        except Exception:
+            try:
+                bot.send_message(user_id, result_text, parse_mode='HTML')
+            except:
+                pass
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_reset_confirm")
 def admin_reset_confirm(call):
@@ -792,6 +968,50 @@ def safe_update_de_json(json_string):
 # Заменяем метод десериализации Update
 telebot.types.Update.de_json = staticmethod(safe_update_de_json)
 
+def check_existing_clover_participants():
+    """Проверка всех пользователей с 3+ рефералами и отправка уведомлений о участии"""
+    try:
+        print("Проверка участников конкурса на печеньку...")
+        # Получаем всех пользователей с 3+ рефералами
+        db.cursor.execute('''
+            SELECT user_id, username, first_name, referrals_count
+            FROM users
+            WHERE is_banned = 0 AND referrals_count >= ?
+        ''', (CLOVER_CONTEST_MIN_REFERRALS,))
+        
+        users = db.cursor.fetchall()
+        added = 0
+        notified = 0
+        
+        for user in users:
+            user_id = user['user_id']
+            referrals_count = user['referrals_count']
+            
+            # Добавляем в участники, если еще не добавлен
+            if not db.is_clover_participant(user_id):
+                db.add_clover_participant(user_id)
+                added += 1
+            
+            # Отправляем уведомление, если еще не отправляли
+            if not db.is_clover_notified(user_id):
+                try:
+                    participation_text = f"🎉 <b>ПОЗДРАВЛЯЕМ!</b>\n\n"
+                    participation_text += f"Вы пригласили {referrals_count} рефералов и стали участником конкурса на CLOVER PIN!\n\n"
+                    participation_text += f"🍪 {CLOVER_CONTEST_NOTIFICATION_TEXT}"
+                    bot.send_message(user_id, participation_text, parse_mode='HTML')
+                    db.mark_clover_notified(user_id)
+                    notified += 1
+                    time.sleep(0.1)  # Небольшая задержка между отправками
+                except:
+                    pass  # Игнорируем ошибки (пользователь заблокировал бота и т.д.)
+        
+        if added > 0 or notified > 0:
+            print(f"Добавлено участников: {added}, Отправлено уведомлений: {notified}")
+        else:
+            print("Все участники уже уведомлены")
+    except Exception as e:
+        print(f"Ошибка при проверке участников: {e}")
+
 if __name__ == "__main__":
     try:
         print("Инициализация бота...")
@@ -804,6 +1024,9 @@ if __name__ == "__main__":
         # Проверка токена бота
         bot_info = bot.get_me()
         print(f"Бот подключен: @{bot_info.username}")
+        
+        # Проверка существующих участников конкурса на печеньку
+        check_existing_clover_participants()
         
         print("Бот запущен!")
         # Используем allowed_updates для фильтрации только нужных типов обновлений
