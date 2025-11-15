@@ -19,6 +19,11 @@ FIRST_50_REFERRALS_PRIZE = 50  # Кто первый наберет 50 рефе�
 PRIZE_1ST = "https://t.me/nft/SnoopDogg-552170"  # 1 место (больше всех рефералов)
 PRIZE_FIRST_50 = "https://t.me/nft/InstantRamen-284068"  # Первый, кто наберет 50 рефералов
 
+# Конкурс на печеньку (Clover Pin)
+CLOVER_CONTEST_LINK = "https://t.me/nft/CloverPin-192181"
+CLOVER_CONTEST_MIN_REFERRALS = 3  # Минимальное количество рефералов для участия
+CLOVER_CONTEST_NOTIFICATION_TEXT = "❤️ПРИГЛАСИ 3+ РЕФЕРАЛОВ И УЧАСТВУЙ В РОЗЫГРЫШЕ НА CLOVER PIN! (t.me/nft/CloverPin-192181)"
+
 # База данных
 DATABASE_FILE = "referral_bot.db"
 
