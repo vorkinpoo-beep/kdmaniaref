@@ -129,10 +129,10 @@ class Database:
                 start_date = datetime.now().isoformat()
                 self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('start_date', start_date))
             
-            # Инициализация победителя за 100 рефералов
-            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_100_winner',))
+            # Инициализация победителя за 50 рефералов
+            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_50_winner',))
             if not self.cursor.fetchone():
-                self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('first_100_winner', ''))
+                self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('first_50_winner', ''))
         
             # Создание индексов для оптимизации (ускоряют запросы)
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)')
@@ -218,13 +218,13 @@ class Database:
             user_row = self.cursor.fetchone()
             new_count = user_row['referrals_count'] if user_row else 0
             
-            # Проверка на достижение 100 рефералов (только если >= 100)
-            if new_count >= 100:
+            # Проверка на достижение 50 рефералов (только если >= 50)
+            if new_count >= 50:
                 # Проверяем и обновляем за один запрос (максимальная оптимизация)
                 self.cursor.execute('''
                     UPDATE contest_settings 
                     SET value = ?
-                    WHERE key = 'first_100_winner' AND (value IS NULL OR value = '')
+                    WHERE key = 'first_50_winner' AND (value IS NULL OR value = '')
                 ''', (str(referrer_id),))
             
             # Коммитим сразу для критичных операций
@@ -391,9 +391,9 @@ class Database:
         start_date = self.get_contest_start_date()
         return start_date + timedelta(days=CONTEST_DURATION_DAYS)
     
-    def get_first_100_winner(self):
-        """Получить победителя за первое достижение 100 рефералов"""
-        self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_100_winner',))
+    def get_first_50_winner(self):
+        """Получить победителя за первое достижение 50 рефералов"""
+        self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_50_winner',))
         row = self.cursor.fetchone()
         if row and row['value']:
             try:
@@ -404,14 +404,14 @@ class Database:
                 return None
         return None
     
-    def check_and_set_first_100_winner(self, user_id, referrals_count):
-        """Проверить и установить победителя за 100 рефералов (оптимизированная версия)"""
-        if referrals_count >= 100:
-            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_100_winner',))
+    def check_and_set_first_50_winner(self, user_id, referrals_count):
+        """Проверить и установить победителя за 50 рефералов (оптимизированная версия)"""
+        if referrals_count >= 50:
+            self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_50_winner',))
             winner_row = self.cursor.fetchone()
             if winner_row and not winner_row['value']:
                 self.cursor.execute('UPDATE contest_settings SET value = ? WHERE key = ?', 
-                                  (str(user_id), 'first_100_winner'))
+                                  (str(user_id), 'first_50_winner'))
                 self.conn.commit()
                 return True
         return False
