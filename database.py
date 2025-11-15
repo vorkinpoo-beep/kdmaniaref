@@ -133,12 +133,23 @@ class Database:
             self.cursor.execute('SELECT value FROM contest_settings WHERE key = ?', ('first_50_winner',))
             if not self.cursor.fetchone():
                 self.cursor.execute('INSERT INTO contest_settings (key, value) VALUES (?, ?)', ('first_50_winner', ''))
+            
+            # Таблица участников конкурса на печеньку (Clover Pin)
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS clover_contest_participants (
+                    user_id INTEGER PRIMARY KEY,
+                    notified INTEGER DEFAULT 0,
+                    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(user_id)
+                )
+            ''')
         
             # Создание индексов для оптимизации (ускоряют запросы)
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_banned ON users(is_banned)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_referrals ON users(referrals_count)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals(referrer_id, is_valid)')
             self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals(referred_id)')
+            self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_clover_participants ON clover_contest_participants(user_id)')
             
             self.conn.commit()
         except Exception as e:
@@ -442,6 +453,53 @@ class Database:
     def get_all_users(self):
         """Получить всех пользователей"""
         self.cursor.execute('SELECT * FROM users')
+        return [dict(row) for row in self.cursor.fetchall()]
+    
+    # Методы для конкурса на печеньку (Clover Pin)
+    def add_clover_participant(self, user_id):
+        """Добавить участника конкурса на печеньку"""
+        try:
+            self.cursor.execute('''
+                INSERT OR IGNORE INTO clover_contest_participants (user_id, notified, joined_at)
+                VALUES (?, 0, ?)
+            ''', (user_id, datetime.now().isoformat()))
+            self.conn.commit()
+            return True
+        except:
+            return False
+    
+    def is_clover_participant(self, user_id):
+        """Проверить, является ли пользователь участником конкурса на печеньку"""
+        self.cursor.execute('SELECT user_id FROM clover_contest_participants WHERE user_id = ?', (user_id,))
+        return self.cursor.fetchone() is not None
+    
+    def mark_clover_notified(self, user_id):
+        """Отметить, что участнику отправлено уведомление о участии"""
+        try:
+            self.cursor.execute('''
+                UPDATE clover_contest_participants 
+                SET notified = 1 
+                WHERE user_id = ?
+            ''', (user_id,))
+            self.conn.commit()
+            return True
+        except:
+            return False
+    
+    def is_clover_notified(self, user_id):
+        """Проверить, отправлено ли уведомление участнику"""
+        self.cursor.execute('SELECT notified FROM clover_contest_participants WHERE user_id = ?', (user_id,))
+        row = self.cursor.fetchone()
+        return row and row['notified'] == 1
+    
+    def get_all_clover_participants(self):
+        """Получить всех участников конкурса на печеньку"""
+        self.cursor.execute('''
+            SELECT p.user_id, u.username, u.first_name, u.referrals_count
+            FROM clover_contest_participants p
+            JOIN users u ON p.user_id = u.user_id
+            WHERE u.is_banned = 0
+        ''')
         return [dict(row) for row in self.cursor.fetchall()]
     
     def close(self):
